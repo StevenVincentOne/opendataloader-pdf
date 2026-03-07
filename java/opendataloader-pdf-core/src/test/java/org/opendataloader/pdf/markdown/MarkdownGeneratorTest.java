@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -77,6 +79,61 @@ public class MarkdownGeneratorTest {
         assertEquals("# ", generateHeadingPrefix(1));
         assertEquals("# ", generateHeadingPrefix(0));
         assertEquals("# ", generateHeadingPrefix(-1));
+    }
+
+    @Test
+    void testSplitFlattenedContentsEntries() {
+        String input = "Introduction CHAPTER ONE: LOWER THAN THE ANGELS CHAPTER TWO: THE HARVEST OF THE SEASONS CHAPTER THREE: THE GRAIN IN THE STONE Bibliography Index";
+
+        List<String> entries = MarkdownGenerator.splitFlattenedContentsEntries(input);
+
+        assertEquals(List.of(
+            "Introduction",
+            "CHAPTER ONE: LOWER THAN THE ANGELS",
+            "CHAPTER TWO: THE HARVEST OF THE SEASONS",
+            "CHAPTER THREE: THE GRAIN IN THE STONE",
+            "Bibliography",
+            "Index"
+        ), entries);
+    }
+
+    @Test
+    void testSplitFlattenedContentsEntriesHandlesGenericFrontMatter() {
+        String input = "Cover About the Book About the Author Other Books by J. Bronowski Title Page Foreword by Richard Dawkins Introduction";
+
+        List<String> entries = MarkdownGenerator.splitFlattenedContentsEntries(input);
+
+        assertEquals(List.of(
+            "Cover",
+            "About the Book",
+            "About the Author",
+            "Other Books by J. Bronowski",
+            "Title Page",
+            "Foreword by Richard Dawkins",
+            "Introduction"
+        ), entries);
+    }
+
+    @Test
+    void testSplitFlattenedContentsEntriesHandlesRomanNumeralChaptersAndAppendix() {
+        String input = "Preface PART I: DISCOVERY CHAPTER IV: THE METHOD Appendix A: SOURCES Notes References";
+
+        List<String> entries = MarkdownGenerator.splitFlattenedContentsEntries(input);
+
+        assertEquals(List.of(
+            "Preface",
+            "PART I: DISCOVERY",
+            "CHAPTER IV: THE METHOD",
+            "Appendix A: SOURCES",
+            "Notes",
+            "References"
+        ), entries);
+    }
+
+    @Test
+    void testSplitFlattenedContentsEntriesReturnsEmptyForNormalParagraph() {
+        String input = "This is a normal prose paragraph about the development of science and should not be split into contents entries.";
+        assertTrue(MarkdownGenerator.splitFlattenedContentsEntries(input).isEmpty());
     }
 
     /**
