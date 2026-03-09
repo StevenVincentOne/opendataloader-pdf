@@ -59,6 +59,58 @@ public class MarkdownGenerator implements Closeable {
     protected boolean embedImages = false;
     protected String imageFormat = Config.IMAGE_FORMAT_PNG;
     protected boolean includeHeaderFooter = false;
+    protected boolean inContentsSection = false;
+    private static final Pattern NUMBERED_HEADING_RE = Pattern.compile("^(\\d+(?:\\.\\d+)+\\.?)\\s+(.+)$");
+    private static final Pattern FUSED_SUBTITLE_RE =
+        Pattern.compile("^(.+?)\\s+([A-Z][A-Za-z0-9]+(?:-[A-Za-z0-9]+)+:\\s+.+)$");
+    private static final Pattern CONTENTS_HEADING_PATTERN = Pattern.compile("^(contents|table of contents)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern CONTENTS_ENTRY_MARKER_PATTERN = Pattern.compile(
+        "(?:"
+            + "Cover"
+            + "|Title\\s+Page"
+            + "|(?:Table\\s+of\\s+)?Contents"
+            + "|About\\s+(?:the|this)\\s+(?:Book|Author)"
+            + "|(?:Also|Other\\s+Books)\\s+by\\s+.+?"
+            + "|Foreword(?:\\s+by\\s+.+?)?"
+            + "|Preface"
+            + "|Prologue"
+            + "|Introduction"
+            + "|Afterword"
+            + "|Epilogue"
+            + "|Acknowledg(?:e)?ments?"
+            + "|Notes"
+            + "|References"
+            + "|Bibliography"
+            + "|Index"
+            + "|Picture\\s+Credits"
+            + "|Copyright"
+            + "|Appendix(?:\\s+[A-Z0-9IVXLC]+)?(?:\\s*:\\s+[^\\d].*?)?"
+            + "|Part\\s+(?:[0-9]+|[IVXLC]+|[A-Z]+)(?:\\s*:\\s+.*?|\\s+-\\s+.*?)?"
+            + "|Chapter\\s+(?:[0-9]+|[IVXLC]+|[A-Z]+)(?:\\s*:\\s+.*?|\\s+-\\s+.*?)?"
+            + ")(?=\\s+(?:"
+            + "Cover"
+            + "|Title\\s+Page"
+            + "|(?:Table\\s+of\\s+)?Contents"
+            + "|About\\s+(?:the|this)\\s+(?:Book|Author)"
+            + "|(?:Also|Other\\s+Books)\\s+by\\s+[A-Z]"
+            + "|Foreword(?:\\s+by\\s+[A-Z])?"
+            + "|Preface"
+            + "|Prologue"
+            + "|Introduction"
+            + "|Afterword"
+            + "|Epilogue"
+            + "|Acknowledg(?:e)?ments?"
+            + "|Notes"
+            + "|References"
+            + "|Bibliography"
+            + "|Index"
+            + "|Picture\\s+Credits"
+            + "|Copyright"
+            + "|Appendix(?:\\s+[A-Z0-9IVXLC]+)?"
+            + "|Part\\s+(?:[0-9]+|[IVXLC]+|[A-Z]+)"
+            + "|Chapter\\s+(?:[0-9]+|[IVXLC]+|[A-Z]+)"
+            + ")|$)",
+        Pattern.CASE_INSENSITIVE);
     private static final Pattern TABLE_CAPTION_RE = Pattern.compile("^Table\\s+\\d+\\s*\\|\\s+.+", Pattern.CASE_INSENSITIVE);
     private static final Pattern TABLE_CAPTION_IN_TEXT_RE = Pattern.compile(".*\\b(Table\\s+\\d+\\s*\\|\\s+.+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern YEAR_LABEL_PAIR_RE = Pattern.compile("([A-Za-z][A-Za-z0-9.+\\-]*)\\s+(20\\d{2})");
@@ -1156,10 +1208,31 @@ public class MarkdownGenerator implements Closeable {
     }
 
     protected void writeParagraph(SemanticParagraph textNode) throws IOException {
+        if (inContentsSection) {
+            List<String> entries = splitFlattenedContentsEntries(textNode.getValue());
+            if (!entries.isEmpty()) {
+                for (int i = 0; i < entries.size(); i++) {
+                    markdownWriter.write(getCorrectMarkdownString(entries.get(i)));
+                    if (i < entries.size() - 1) {
+                        writeLineBreak();
+                    }
+                }
+                return;
+            }
+        }
         writeSemanticTextNode(textNode);
     }
 
     protected void writeHeading(SemanticHeading heading) throws IOException {
+        String value = heading.getValue() == null ? "" : heading.getValue()
+            .replace(MarkdownSyntax.LINE_BREAK, MarkdownSyntax.SPACE).trim();
+
+        inContentsSection = CONTENTS_HEADING_PATTERN.matcher(value).matches();
+
+        String[] headingParts = splitFusedNumberedHeadingSubtitle(value);
+        String headingText = headingParts[0] == null ? "" : headingParts[0];
+        String subtitleText = headingParts[1];
+
         if (!isInsideTable()) {
             // Cap heading level to 1-6 per Markdown specification
             int headingLevel = Math.min(6, Math.max(1, heading.getHeadingLevel()));
@@ -1168,7 +1241,87 @@ public class MarkdownGenerator implements Closeable {
             }
             markdownWriter.write(MarkdownSyntax.SPACE);
         }
-        writeSemanticTextNode(heading);
+
+        markdownWriter.write(getCorrectMarkdownString(headingText));
+
+        // Preserve a subtitle fused into the heading line during extraction
+        // (e.g. "1.1. ContributionsPost-Training: ..." in academic PDFs).
+        if (!isInsideTable() && subtitleText != null && !subtitleText.isEmpty()) {
+            writeLineBreak();
+            writeLineBreak();
+            markdownWriter.write(getCorrectMarkdownString(subtitleText));
+        }
+    }
+
+    static String[] splitFusedNumberedHeadingSubtitle(String input) {
+        String text = input == null ? "" : input.replaceAll("\\s+", " ").trim();
+        if (text.isEmpty()) {
+            return new String[]{text, null};
+        }
+
+        Matcher numbered = NUMBERED_HEADING_RE.matcher(text);
+        if (!numbered.matches()) {
+            return new String[]{text, null};
+        }
+
+        String sectionNumber = numbered.group(1).trim();
+        String remainder = numbered.group(2)
+            .replaceAll("([a-z])(Post|Pre|Self|Co)-", "$1 $2-")
+            .trim();
+
+        Matcher fused = FUSED_SUBTITLE_RE.matcher(remainder);
+        if (!fused.matches()) {
+            return new String[]{text, null};
+        }
+
+        String headingTail = fused.group(1).trim();
+        String subtitle = fused.group(2).trim();
+        if (headingTail.isEmpty() || subtitle.length() < 10 || subtitle.length() > 240) {
+            return new String[]{text, null};
+        }
+
+        int headingWordCount = headingTail.split("\\s+").length;
+        if (headingWordCount < 1 || headingWordCount > 4) {
+            return new String[]{text, null};
+        }
+
+        return new String[]{sectionNumber + " " + headingTail, subtitle};
+    }
+
+    static List<String> splitFlattenedContentsEntries(String value) {
+        List<String> entries = new ArrayList<>();
+        if (value == null) {
+            return entries;
+        }
+
+        String normalized = value
+            .replace("\r", " ")
+            .replace("\n", " ")
+            .replace('\t', ' ')
+            .replaceAll("\\s+", " ")
+            .trim();
+        if (normalized.isEmpty()) {
+            return entries;
+        }
+
+        Matcher matcher = CONTENTS_ENTRY_MARKER_PATTERN.matcher(normalized);
+        List<int[]> spans = new ArrayList<>();
+        while (matcher.find()) {
+            spans.add(new int[]{matcher.start(), matcher.end()});
+        }
+        if (spans.size() <= 1) {
+            return entries;
+        }
+
+        for (int i = 0; i < spans.size(); i++) {
+            int start = spans.get(i)[0];
+            int end = (i + 1 < spans.size()) ? spans.get(i + 1)[0] : normalized.length();
+            String chunk = normalized.substring(start, end).trim().replaceFirst("^[\\-\u2013\u2014\u2022]+\\s*", "");
+            if (!chunk.isEmpty()) {
+                entries.add(chunk);
+            }
+        }
+        return entries;
     }
 
     protected void enterTable() {
