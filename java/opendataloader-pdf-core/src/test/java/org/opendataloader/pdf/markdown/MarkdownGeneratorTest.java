@@ -81,6 +81,58 @@ public class MarkdownGeneratorTest {
         assertEquals("# ", generateHeadingPrefix(-1));
     }
 
+
+    @Test
+    void testSplitFusedNumberedHeadingSubtitle() {
+        String input = "1.1. ContributionsPost-Training: Large-Scale Reinforcement Learning on the Base Model";
+        String[] split = MarkdownGenerator.splitFusedNumberedHeadingSubtitle(input);
+        assertEquals("1.1. Contributions", split[0]);
+        assertEquals("Post-Training: Large-Scale Reinforcement Learning on the Base Model", split[1]);
+    }
+
+    @Test
+    void testSplitFusedNumberedHeadingSubtitleNoSplitForNormalHeading() {
+        String input = "2.2.1 Reinforcement Learning Algorithm";
+        String[] split = MarkdownGenerator.splitFusedNumberedHeadingSubtitle(input);
+        assertEquals(input, split[0]);
+        assertNull(split[1]);
+    }
+
+    @Test
+    void testSplitFlattenedContentsEntries() {
+        String input = "Introduction CHAPTER ONE: LOWER THAN THE ANGELS CHAPTER TWO: THE HARVEST OF THE SEASONS CHAPTER THREE: THE GRAIN IN THE STONE Bibliography Index";
+        List<String> entries = MarkdownGenerator.splitFlattenedContentsEntries(input);
+        assertEquals(List.of(
+            "Introduction",
+            "CHAPTER ONE: LOWER THAN THE ANGELS",
+            "CHAPTER TWO: THE HARVEST OF THE SEASONS",
+            "CHAPTER THREE: THE GRAIN IN THE STONE",
+            "Bibliography",
+            "Index"
+        ), entries);
+    }
+
+    @Test
+    void testSplitFlattenedContentsEntriesHandlesGenericFrontMatter() {
+        String input = "Cover About the Book About the Author Other Books by J. Bronowski Title Page Foreword by Richard Dawkins Introduction";
+        List<String> entries = MarkdownGenerator.splitFlattenedContentsEntries(input);
+        assertEquals(List.of(
+            "Cover",
+            "About the Book",
+            "About the Author",
+            "Other Books by J. Bronowski",
+            "Title Page",
+            "Foreword by Richard Dawkins",
+            "Introduction"
+        ), entries);
+    }
+
+    @Test
+    void testSplitFlattenedContentsEntriesReturnsEmptyForNormalParagraph() {
+        String input = "This is a normal prose paragraph about the development of science and should not be split.";
+        assertTrue(MarkdownGenerator.splitFlattenedContentsEntries(input).isEmpty());
+    }
+
     @Test
     void testBuildMetricColumnsDisambiguatesDuplicates() {
         List<String> cols = MarkdownGenerator.buildMetricColumns("pass@1 cons@64 pass@1 pass@1 pass@1 rating", 6);
