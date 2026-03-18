@@ -134,6 +134,55 @@ public class MarkdownGeneratorTest {
     }
 
     @Test
+    void testSplitFlattenedContentsEntriesPreservesPreambleBeforeFirstAnchor() {
+        // BUG FIX: content before the first known anchor was previously silently dropped.
+        // "Closing the Loop Learning ..." should be preserved as the first entry even
+        // though it contains no structural keywords.
+        String input = "Closing the Loop Learning Unkneading Transfer Green Screen Acknowledgments About the Author Glossary Bibliography";
+        List<String> entries = MarkdownGenerator.splitFlattenedContentsEntries(input);
+        // First entry must be the preamble, not the first anchor
+        assertFalse(entries.isEmpty());
+        assertEquals("Closing the Loop Learning Unkneading Transfer Green Screen", entries.get(0));
+        assertTrue(entries.contains("Glossary"));
+        assertTrue(entries.contains("Bibliography"));
+    }
+
+    @Test
+    void testSplitFlattenedContentsEntriesHandlesInterlude() {
+        // "Interlude" is a structural section marker used in non-fiction books.
+        // It must be recognised as an anchor when followed by a Title-Case word.
+        String input = "Preface Introduction Interlude The Prehistory of Computation Cybernetics Love and War Acknowledgments";
+        List<String> entries = MarkdownGenerator.splitFlattenedContentsEntries(input);
+        assertFalse(entries.isEmpty());
+        // "Interlude The Prehistory..." should be its own entry
+        assertTrue(entries.stream().anyMatch(e -> e.startsWith("Interlude")));
+        assertTrue(entries.contains("Acknowledgments"));
+    }
+
+    @Test
+    void testSplitFlattenedContentsEntriesStripsTrailingPageNumbers() {
+        // Standard ToCs include page numbers at the end of each entry chunk.
+        // They should be stripped, leaving just the title.
+        String input = "Foreword ix Preface xiii Introduction 1 Bibliography 305 Index 311";
+        List<String> entries = MarkdownGenerator.splitFlattenedContentsEntries(input);
+        // Page numbers should be stripped
+        assertTrue(entries.stream().noneMatch(e -> e.matches(".*\\s+\\d+$") || e.matches(".*\\s+[ivxlcdm]+$")));
+    }
+
+    @Test
+    void testSplitFlattenedContentsEntriesFallsBackToPageNumberSplit() {
+        // When no structural keywords are present but page numbers separate entries,
+        // Phase 2 (page-number split) should fire.
+        String input = "Origins 15 Abiogenesis 23 Thermodynamics 51 Dynamic Stability 78";
+        List<String> entries = MarkdownGenerator.splitFlattenedContentsEntries(input);
+        assertEquals(4, entries.size());
+        assertEquals("Origins", entries.get(0));
+        assertEquals("Abiogenesis", entries.get(1));
+        assertEquals("Thermodynamics", entries.get(2));
+        assertEquals("Dynamic Stability", entries.get(3));
+    }
+
+    @Test
     void testBuildMetricColumnsDisambiguatesDuplicates() {
         List<String> cols = MarkdownGenerator.buildMetricColumns("pass@1 cons@64 pass@1 pass@1 pass@1 rating", 6);
         assertEquals(List.of("pass@1", "cons@64", "pass@1_2", "pass@1_3", "pass@1_4", "rating"), cols);
