@@ -55,7 +55,9 @@ public class MarkdownGenerator implements Closeable {
     private static final Pattern NUMBERED_HEADING_RE = Pattern.compile("^(\\d+(?:\\.\\d+)+\\.?)\\s+(.+)$");
     private static final Pattern FUSED_SUBTITLE_RE =
         Pattern.compile("^(.+?)\\s+([A-Z][A-Za-z0-9]+(?:-[A-Za-z0-9]+)+:\\s+.+)$");
-    private static final Pattern CONTENTS_HEADING_PATTERN = Pattern.compile("^(contents|table of contents)$", Pattern.CASE_INSENSITIVE);
+    // Matches "Contents" or "Table of Contents" with an optional trailing colon.
+    // The colon variant ("Contents:") is common in traditionally typeset books.
+    private static final Pattern CONTENTS_HEADING_PATTERN = Pattern.compile("^(contents|table of contents):?$", Pattern.CASE_INSENSITIVE);
     private static final Pattern CONTENTS_ENTRY_MARKER_PATTERN = Pattern.compile(
         "(?:"
             + "Cover"
