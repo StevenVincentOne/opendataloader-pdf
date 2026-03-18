@@ -1224,6 +1224,41 @@ public class MarkdownGenerator implements Closeable {
 
     protected void writeParagraph(SemanticParagraph textNode) throws IOException {
         if (inContentsSection) {
+            // Phase 0: recover individual PDF line boundaries by temporarily enabling
+            // keepLineBreaks mode.  TextBlock.toString() joins merged TextLines with
+            // "\n" instead of " " when this flag is set, so getValue() returns one
+            // original PDF line per "\n"-delimited segment.  This directly addresses
+            // the root cause: ParagraphProcessor merges consecutive short lines (one
+            // per ToC entry in the PDF) into a single SemanticParagraph, discarding
+            // the per-entry line boundaries.  Web-scraped PDFs (Chrome print-to-PDF)
+            // are especially affected because their ToC entries have no page numbers
+            // or structural anchors for the keyword/page-number splitters to key on.
+            StaticContainers.setKeepLineBreaks(true);
+            String valueWithBreaks;
+            try {
+                valueWithBreaks = textNode.getValue();
+            } finally {
+                StaticContainers.setKeepLineBreaks(false);
+            }
+            String[] rawLines = valueWithBreaks.split("\n", -1);
+            if (rawLines.length >= 2) {
+                boolean wroteAny = false;
+                for (String rawLine : rawLines) {
+                    String trimmed = rawLine.trim();
+                    if (trimmed.isEmpty()) continue;
+                    // Run the existing keyword/page-number splitter on each recovered
+                    // line in case a single PDF line still has concatenated entries.
+                    List<String> entries = splitFlattenedContentsEntries(trimmed);
+                    if (entries.isEmpty()) entries = java.util.Collections.singletonList(trimmed);
+                    for (String entry : entries) {
+                        if (wroteAny) writeLineBreak();
+                        markdownWriter.write(getCorrectMarkdownString(entry));
+                        wroteAny = true;
+                    }
+                }
+                if (wroteAny) return;
+            }
+            // Phase 1+2 fallback: flat keyword/page-number split on the merged value.
             List<String> entries = splitFlattenedContentsEntries(textNode.getValue());
             if (!entries.isEmpty()) {
                 for (int i = 0; i < entries.size(); i++) {
