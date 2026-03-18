@@ -69,12 +69,18 @@ public class MarkdownGenerator implements Closeable {
             + "|Notes"
             + "|References"
             + "|Bibliography"
+            + "|Glossary"
             + "|Index"
             + "|Picture\\s+Credits"
             + "|Copyright"
             + "|Appendix(?:\\s+[A-Z0-9IVXLC]+)?(?:\\s*:\\s+[^\\d].*?)?"
             + "|Part\\s+(?:[0-9]+|[IVXLC]+|[A-Z]+)(?:\\s*:\\s+.*?|\\s+-\\s+.*?)?"
             + "|Chapter\\s+(?:[0-9]+|[IVXLC]+|[A-Z]+)(?:\\s*:\\s+.*?|\\s+-\\s+.*?)?"
+            // "Interlude" is a structural section marker in many non-fiction books.
+            // Added to both sides so preceding entries can anchor to it, and a separate
+            // postProcessInterludeChunks() pass handles cases where its outer lookahead
+            // cannot fire (e.g. "Interlude The Prehistory" where "The" is not a keyword).
+            + "|Interlude"
             + ")(?=\\s+(?:"
             + "Cover"
             + "|Title\\s+Page"
@@ -91,14 +97,28 @@ public class MarkdownGenerator implements Closeable {
             + "|Notes"
             + "|References"
             + "|Bibliography"
+            + "|Glossary"
             + "|Index"
             + "|Picture\\s+Credits"
             + "|Copyright"
             + "|Appendix(?:\\s+[A-Z0-9IVXLC]+)?"
             + "|Part\\s+(?:[0-9]+|[IVXLC]+|[A-Z]+)"
             + "|Chapter\\s+(?:[0-9]+|[IVXLC]+|[A-Z]+)"
+            + "|Interlude"
             + ")|$)",
         Pattern.CASE_INSENSITIVE);
+    // Strips a trailing page number (arabic or roman) from a ToC entry chunk.
+    // e.g. "Foreword xv" → "Foreword", "Introduction 1" → "Introduction"
+    private static final Pattern TOC_ENTRY_TRAILING_PAGE_NUMBER = Pattern.compile(
+        "\\s+(?:[ivxlcdmIVXLCDM]{1,6}|\\d{1,4})\\s*$");
+    // Matches an inline page-number separator between two ToC entries.
+    // e.g. "Foreword 9 Preface 13" — split on " 9 " and " 13 "
+    private static final Pattern TOC_PAGE_NUMBER_SPLIT = Pattern.compile(
+        "(?<=\\S)\\s+(?:[ivxlcdmIVXLCDM]{1,6}|\\d{1,4})\\s+(?=[A-Z])");
+    // Matches "Interlude" as a section-break word inside a larger chunk.
+    // e.g. "Introduction Interlude The Prehistory" splits into two entries.
+    private static final Pattern TOC_INTERLUDE_SPLIT = Pattern.compile(
+        "(?<=\\S)\\s+(Interlude(?:\\s*:\\s+|\\s+)[A-Z])", Pattern.CASE_INSENSITIVE);
 
     MarkdownGenerator(File inputPdf, Config config) throws IOException {
         String cutPdfFileName = inputPdf.getName();
@@ -425,21 +445,89 @@ public class MarkdownGenerator implements Closeable {
             return entries;
         }
 
+        // Phase 1: anchor-keyword split.
         Matcher matcher = CONTENTS_ENTRY_MARKER_PATTERN.matcher(normalized);
         List<int[]> spans = new ArrayList<>();
         while (matcher.find()) {
             spans.add(new int[]{matcher.start(), matcher.end()});
         }
-        if (spans.size() <= 1) {
-            return entries;
+        if (spans.size() >= 2) {
+            // BUG FIX: preserve content that appears BEFORE the first anchor.
+            // Previously this "preamble" text was silently dropped, causing all section
+            // names that precede the first known structural keyword to disappear entirely.
+            // e.g. "Closing the Loop Learning ... Acknowledgments Bibliography" lost every
+            // entry before "Acknowledgments". Now it is emitted as the first entry.
+            if (spans.get(0)[0] > 0) {
+                String preamble = stripTocLeadBullet(
+                    stripTocTrailingPageNumber(normalized.substring(0, spans.get(0)[0]).trim()));
+                if (!preamble.isEmpty()) {
+                    entries.add(preamble);
+                }
+            }
+            for (int i = 0; i < spans.size(); i++) {
+                int start = spans.get(i)[0];
+                int end = (i + 1 < spans.size()) ? spans.get(i + 1)[0] : normalized.length();
+                String chunk = stripTocLeadBullet(
+                    stripTocTrailingPageNumber(normalized.substring(start, end).trim()));
+                if (!chunk.isEmpty()) {
+                    entries.add(chunk);
+                }
+            }
+            // Post-process: split any chunk containing "Interlude [Title-Case]" at the
+            // Interlude boundary. "Interlude" cannot always satisfy the outer lookahead
+            // on its own when what follows it is not a known structural keyword.
+            return postProcessInterludeChunks(entries);
         }
 
-        for (int i = 0; i < spans.size(); i++) {
-            int start = spans.get(i)[0];
-            int end = (i + 1 < spans.size()) ? spans.get(i + 1)[0] : normalized.length();
-            String chunk = normalized.substring(start, end).trim().replaceFirst("^[\\-–—•]+\\s*", "");
-            if (!chunk.isEmpty()) {
-                entries.add(chunk);
+        // Phase 2: page-number split fallback.
+        // Handles ToCs where entries are separated by page numbers but none of the
+        // entries happen to be structural keywords (e.g. "Origins 15 Abiogenesis 23 ...").
+        List<String> byPageNumber = splitTocByPageNumbers(normalized);
+        if (byPageNumber.size() >= 2) {
+            return byPageNumber;
+        }
+
+        return entries;
+    }
+
+    /**
+     * Post-processes a list of ToC entries to split any chunk that contains the word
+     * "Interlude" followed by a Title-Case word into two separate entries.
+     */
+    static List<String> postProcessInterludeChunks(List<String> entries) {
+        List<String> result = new ArrayList<>();
+        for (String entry : entries) {
+            Matcher m = TOC_INTERLUDE_SPLIT.matcher(entry);
+            if (m.find() && m.start() > 0) {
+                String before = entry.substring(0, m.start()).trim();
+                String after = entry.substring(m.start(1)).trim();
+                if (!before.isEmpty()) result.add(before);
+                if (!after.isEmpty()) result.add(after);
+            } else {
+                result.add(entry);
+            }
+        }
+        return result;
+    }
+
+    private static String stripTocTrailingPageNumber(String text) {
+        return TOC_ENTRY_TRAILING_PAGE_NUMBER.matcher(text).replaceFirst("").trim();
+    }
+
+    private static String stripTocLeadBullet(String text) {
+        return text.replaceFirst("^[\\-\u2013\u2014\u2022]+\\s*", "");
+    }
+
+    private static List<String> splitTocByPageNumbers(String normalized) {
+        String[] parts = TOC_PAGE_NUMBER_SPLIT.split(normalized);
+        if (parts.length < 2) {
+            return new ArrayList<>();
+        }
+        List<String> entries = new ArrayList<>();
+        for (String part : parts) {
+            String trimmed = stripTocLeadBullet(stripTocTrailingPageNumber(part.trim()));
+            if (!trimmed.isEmpty()) {
+                entries.add(trimmed);
             }
         }
         return entries;
