@@ -400,20 +400,44 @@ public class DocumentProcessor {
                 return b1.getLastPageNumber() - b2.getLastPageNumber();
             }
             if (!Objects.equals(b1.getTopY(), b2.getTopY())) {
-                return b2.getTopY() - b1.getTopY() > 0 ? 1 : -1;
+                return compareCoordinates(b2.getTopY(), b1.getTopY());
             }
             if (!Objects.equals(b1.getLeftX(), b2.getLeftX())) {
-                return b1.getLeftX() - b2.getLeftX() > 0 ? 1 : -1;
+                return compareCoordinates(b1.getLeftX(), b2.getLeftX());
             }
             if (!Objects.equals(b1.getBottomY(), b2.getBottomY())) {
-                return b1.getBottomY() - b2.getBottomY() > 0 ? 1 : -1;
+                return compareCoordinates(b1.getBottomY(), b2.getBottomY());
             }
             if (!Objects.equals(b1.getRightX(), b2.getRightX())) {
-                return b1.getRightX() - b2.getRightX() > 0 ? 1 : -1;
+                return compareCoordinates(b1.getRightX(), b2.getRightX());
             }
             return 0;
         });
         return sortedContents;
+    }
+
+    private static int compareCoordinates(Double c1, Double c2) {
+        if (c1 == null && c2 == null) {
+            return 0;
+        }
+        if (c1 == null) {
+            return 1;
+        }
+        if (c2 == null) {
+            return -1;
+        }
+        boolean c1NaN = Double.isNaN(c1);
+        boolean c2NaN = Double.isNaN(c2);
+        if (c1NaN && c2NaN) {
+            return 0;
+        }
+        if (c1NaN) {
+            return 1;
+        }
+        if (c2NaN) {
+            return -1;
+        }
+        return Double.compare(c1, c2);
     }
 
     /**
